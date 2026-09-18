@@ -2,7 +2,7 @@
 
 Build an understandable background coding system in small, demonstrable steps. Start with durable sessions and a scripted worker; add a coding agent, isolated execution, and pull requests only after that foundation works.
 
-**Status:** F0 toolchain is pinned and the local HTTP server defaults to 127.0.0.1:3000 (September 18, 2026). Session behavior and SQLite storage are not implemented yet. Cloudflare, Modal, and OpenCode remain reference choices, not requirements for the first build.
+**Status:** F0 toolchain is pinned, the local HTTP server defaults to 127.0.0.1:3000, and `npm run db:migrate` applies the SQLite schema (September 18, 2026). Session commands and scheduling are not implemented yet. Cloudflare, Modal, and OpenCode remain reference choices, not requirements for the first build.
 
 ## Runtime
 
@@ -20,7 +20,7 @@ npm test
 
 `npm run dev` watches `src/` and runs the TypeScript server. `npm start` runs the compiled server after `npm run build`. Both bind `127.0.0.1:3000` by default (`HOST`, `PORT`, `DATABASE_PATH`). `GET /health` reports readiness and `mode: simulated`. Session routes and SQLite recovery are later tasks; application routes return 503 until the server is ready.
 
-`db:migrate`, `test:e2e`, and `demo:seed` are owned by later tasks and are not present as placeholders.
+`npm run db:migrate` applies versioned migrations to `DATABASE_PATH` (default `./.data/sessions.sqlite`), creating the parent directory if needed. Re-running it does not delete existing data. `test:e2e` and `demo:seed` are owned by later tasks.
 
 Checked on Node 24 (macOS Darwin 25.6.0 arm64, and Linux aarch64 via `node:24.21.0-bookworm`). Windows is pending. Any current Node 24 release is fine; package versions are pinned in `package-lock.json`.
 
