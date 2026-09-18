@@ -1,0 +1,28 @@
+# dependencies
+node_modules/
+
+# compiled output
+dist/
+dist-tests/
+
+# local application data
+.data/
+
+# SQLite databases and sidecars
+*.sqlite
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+*.db
+
+# local secrets
+.env
+.env.*
+!.env.example
+
+# logs and coverage
+npm-debug.log*
+coverage/
+
+# OS
+.DS_Store

@@ -29,11 +29,11 @@ Use one TypeScript application with npm and an on-disk SQLite database. Keep the
 
 | Item | Proposed baseline | Reason |
 | --- | --- | --- |
-| Node.js | 24 LTS; exact patch pinned in F0 | Supported runtime for server and tests |
+| Node.js | 24 LTS | Supported runtime for server and tests |
 | TypeScript | 6.0.x; exact patch pinned in F0 | Explicit command/event contracts and strict checks |
 | Express | 5.x; exact patch pinned in F0 | Small HTTP routing layer |
 | better-sqlite3 | 13.0.3 candidate; validate in F0 | Explicit SQL transactions without an ORM |
-| npm | Version bundled with chosen Node runtime, recorded in F0 | One package manager and lockfile |
+| npm | Version bundled with Node 24 | One package manager and lockfile |
 | Tests | Built-in `node:test` and `node:assert/strict` | Avoid a separate test framework for the foundation |
 | Browser UI, F2 | HTML, CSS, browser JavaScript, native EventSource | Expose the lifecycle before choosing a frontend framework |
 | Formatting/linting | Prettier and ESLint with TypeScript support; exact versions selected in F0 | Automated consistency |
@@ -49,7 +49,7 @@ React can be introduced when UI complexity warrants it. It is not needed to teac
 | Command | Required behavior |
 | --- | --- |
 | `npm ci` | Install the committed dependency set |
-| `npm run dev` | Compile/watch TypeScript and run on `127.0.0.1:3000` |
+| `npm run dev` | Watch and run the TypeScript entry; later bind `127.0.0.1:3000` |
 | `npm run build` | Compile to `dist/`; include static UI assets once F2 exists |
 | `npm start` | Run the compiled server and scheduler |
 | `npm run db:migrate` | Apply versioned SQLite migrations to the configured file |

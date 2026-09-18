@@ -2,7 +2,27 @@
 
 Build an understandable background coding system in small, demonstrable steps. Start with durable sessions and a scripted worker; add a coding agent, isolated execution, and pull requests only after that foundation works.
 
-**Status:** planning only, September 18, 2026. This repository contains documentation, not a runnable application. Cloudflare, Modal, and OpenCode are reference choices, not requirements for the first build.
+**Status:** F0 toolchain is pinned (September 18, 2026). Session behavior, HTTP routes, and SQLite storage are not implemented yet. Cloudflare, Modal, and OpenCode remain reference choices, not requirements for the first build.
+
+## Runtime
+
+Install with Node **24**, then:
+
+```sh
+nvm install
+npm ci
+npm run build
+npm run typecheck
+npm run lint
+npm run format:check
+npm test
+```
+
+`npm run dev` watches `src/server.ts` and restarts on save. `npm start` runs the compiled entry after `npm run build`. These scripts start a process keep-alive until later tasks add the HTTP server.
+
+`db:migrate`, `test:e2e`, and `demo:seed` are owned by later tasks and are not present as placeholders.
+
+Checked on Node 24 (macOS Darwin 25.6.0 arm64, and Linux aarch64 via `node:24.21.0-bookworm`). Windows is pending. Any current Node 24 release is fine; package versions are pinned in `package-lock.json`.
 
 ## Read in this order
 
