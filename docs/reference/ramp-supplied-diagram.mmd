@@ -1,0 +1,237 @@
+flowchart TB
+    subgraph Frontend["🖥️ Frontend (React App)"]
+        UI["Session UI<br/>(SessionEditorPage)"]
+        RQ["React Query<br/>Cache"]
+        WS_Client["WebSocket<br/>Subscriptions"]
+        Iframe_VSCode["VSCode iFrame"]
+        Iframe_VNC["VNC iFrame"]
+        Iframe_TTYD["Terminal iFrame"]
+    end
+
+    subgraph CloudflareWorker["☁️ Cloudflare Worker (agent-api)"]
+        direction TB
+        API["REST API Routes<br/>(/api/sessions/*)"]
+        
+        subgraph DurableObjects["Durable Objects"]
+            SessionAgent["SessionAgent DO<br/>• Per-session state<br/>• Messages & Parts<br/>• Question handling<br/>• Durable SQLite"]
+            EventBus["EventBus DO<br/>• Real-time broadcasting<br/>• User-tagged connections<br/>• Notifications"]
+        end
+        
+        D1[("D1 Database<br/>• Session metadata<br/>• Users & Auth<br/>• Integrations<br/>• Agent memories")]
+        
+        R2[("R2 Storage<br/>• Screenshots<br/>• File uploads<br/>• Assets")]
+    end
+
+    subgraph ModalBackend["🐍 Modal Backend (Python)"]
+        direction TB
+        SessionMgr["Session Manager<br/>(session.py)"]
+        SandboxMgr["Sandbox Manager<br/>(sandboxes.py)"]
+        
+        subgraph ImageConfigs["📦 Image Definitions<br/>(backend/images/)"]
+            BaseImage["base.py<br/>• Common tools<br/>• Code-server<br/>• TTYD<br/>• Claude CLI"]
+            WebAppImage["webapp.py<br/>• Dev server config<br/>• Deploy settings"]
+            CoreImage["core.py<br/>• Postgres, Redis<br/>• Temporal, RabbitMQ"]
+            OtherImages["android.py, ios.py,<br/>elixir.py, etc."]
+        end
+        
+        ModalDict[("Modal Dict<br/>• Session locks<br/>• Image store")]
+        ModalQueue[/"Modal Queue<br/>• Prompt queue"/]
+    end
+
+    subgraph ModalSandbox["📦 Modal Sandbox (Container)"]
+        direction TB
+        
+        subgraph Runner["🏃 Runner (Bun/TypeScript)"]
+            RunnerCLI["Runner CLI<br/>(bin.ts)"]
+            PromptHandler["Prompt Handler<br/>(prompt.ts)"]
+            AgentClientWS["AgentClient<br/>(WebSocket to DO)"]
+            ProxyFactory["Proxy Factory<br/>• JWT Auth<br/>• WS Proxying"]
+        end
+        
+        subgraph OpenCode["🤖 OpenCode Server"]
+            OC_Server["opencode serve"]
+            OC_SDK["@opencode-ai/sdk"]
+            OC_Events["Event Stream<br/>• message.*<br/>• session.*<br/>• question.*"]
+        end
+        
+        subgraph VSCodeStack["💻 VS Code Server"]
+            CodeServer["code-server"]
+            VSProxy["Auth Proxy"]
+        end
+        
+        subgraph VNCStack["🖼️ VNC Stack"]
+            Xvfb["Xvfb<br/>Virtual Display"]
+            Fluxbox["Fluxbox<br/>Window Manager"]
+            X11VNC["x11vnc"]
+            Websockify["websockify"]
+            VNCProxy["Auth Proxy"]
+            Chrome["Chromium<br/>+ DevTools"]
+            DevServer["Dev Server<br/>(repo-specific)"]
+        end
+        
+        subgraph TTYDStack["⌨️ Web Terminal"]
+            TTYD["ttyd"]
+            TTYDProxy["Auth Proxy"]
+        end
+        
+        RepoCode[("Repository Code")]
+        RunnerVol[("Runner Volume")]
+    end
+
+    subgraph ExternalServices["🌐 External Services"]
+        GitHub["GitHub API"]
+        Slack["Slack API"]
+        Linear["Linear API"]
+        Anthropic["Anthropic<br/>(Claude)"]
+        OpenAI["OpenAI<br/>(GPT)"]
+        Google["Google<br/>(Gemini)"]
+    end
+
+    %% Frontend to Worker connections
+    UI -->|"HTTP REST"| API
+    UI -->|"Prompt submission"| API
+    WS_Client <-->|"WebSocket"| EventBus
+    WS_Client <-->|"WebSocket"| SessionAgent
+    RQ <-->|"Cache updates"| WS_Client
+
+    %% iFrames through Modal Tunnels
+    Iframe_VSCode <-->|"Modal Tunnel<br/>+ JWT Auth"| VSProxy
+    Iframe_VNC <-->|"Modal Tunnel<br/>+ JWT Auth"| VNCProxy
+    Iframe_TTYD <-->|"Modal Tunnel<br/>+ JWT Auth"| TTYDProxy
+
+    %% Worker internal connections
+    API --> SessionAgent
+    API --> D1
+    API --> R2
+    SessionAgent --> EventBus
+    SessionAgent --> D1
+    EventBus --> D1
+
+    %% Worker to Modal Backend
+    API -->|"HTTP/gRPC<br/>spawn sandbox"| SessionMgr
+    SessionMgr --> SandboxMgr
+    SandboxMgr --> ImageConfigs
+    SandboxMgr -->|"Create from<br/>image snapshot"| ModalSandbox
+    SandboxMgr <--> ModalDict
+    SessionMgr <--> ModalQueue
+
+    %% Runner connections
+    PromptHandler <-->|"WebSocket<br/>(AgentClient)"| SessionAgent
+    AgentClientWS -->|"opencode events<br/>via WS"| SessionAgent
+    PromptHandler -->|"HTTP webhook<br/>server events"| API
+    RunnerCLI --> PromptHandler
+
+    %% Runner to OpenCode
+    PromptHandler <-->|"HTTP API"| OC_Server
+    OC_Server --> OC_SDK
+    OC_Events -->|"Event stream"| PromptHandler
+
+    %% Proxy connections
+    ProxyFactory --> VSProxy
+    ProxyFactory --> VNCProxy
+    ProxyFactory --> TTYDProxy
+    VSProxy --> CodeServer
+    VNCProxy --> Websockify
+    TTYDProxy --> TTYD
+
+    %% VNC internal
+    Xvfb --> X11VNC
+    Fluxbox --> Xvfb
+    X11VNC --> Websockify
+    Chrome --> Xvfb
+    DevServer -->|"Dev URL"| Chrome
+
+    %% External connections - LLM Providers (at bottom)
+    OC_SDK <-->|"API"| Anthropic
+    OC_SDK <-->|"API"| OpenAI
+    OC_SDK <-->|"API"| Google
+    API <--> GitHub
+    EventBus --> Slack
+    API <--> Linear
+
+    %% Volume/Code connections
+    OC_Server -->|"Read/Write"| RepoCode
+    CodeServer -->|"Edit"| RepoCode
+    RunnerCLI -->|"Config"| RunnerVol
+
+    %% ============ STYLING ============
+    
+    %% Frontend - Blue theme
+    style Frontend fill:#1565c0,stroke:#0d47a1,stroke-width:3px,color:#ffffff
+    style UI fill:#bbdefb,stroke:#1565c0,stroke-width:2px,color:#000000
+    style RQ fill:#bbdefb,stroke:#1565c0,stroke-width:2px,color:#000000
+    style WS_Client fill:#90caf9,stroke:#1565c0,stroke-width:2px,color:#000000
+    style Iframe_VSCode fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000000
+    style Iframe_VNC fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000000
+    style Iframe_TTYD fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#000000
+
+    %% Cloudflare Worker - Orange theme
+    style CloudflareWorker fill:#e65100,stroke:#bf360c,stroke-width:3px,color:#ffffff
+    style API fill:#ffe0b2,stroke:#e65100,stroke-width:2px,color:#000000
+    style DurableObjects fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000000
+    style SessionAgent fill:#ffcc80,stroke:#e65100,stroke-width:2px,color:#000000
+    style EventBus fill:#ffcc80,stroke:#e65100,stroke-width:2px,color:#000000
+    style D1 fill:#fff8e1,stroke:#ff8f00,stroke-width:2px,color:#000000
+    style R2 fill:#fff8e1,stroke:#ff8f00,stroke-width:2px,color:#000000
+
+    %% Modal Backend - Purple theme
+    style ModalBackend fill:#6a1b9a,stroke:#4a148c,stroke-width:3px,color:#ffffff
+    style SessionMgr fill:#e1bee7,stroke:#6a1b9a,stroke-width:2px,color:#000000
+    style SandboxMgr fill:#e1bee7,stroke:#6a1b9a,stroke-width:2px,color:#000000
+    style ImageConfigs fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,color:#000000
+    style BaseImage fill:#ce93d8,stroke:#6a1b9a,stroke-width:2px,color:#000000
+    style WebAppImage fill:#ce93d8,stroke:#6a1b9a,stroke-width:2px,color:#000000
+    style CoreImage fill:#ce93d8,stroke:#6a1b9a,stroke-width:2px,color:#000000
+    style OtherImages fill:#ce93d8,stroke:#6a1b9a,stroke-width:2px,color:#000000
+    style ModalDict fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,color:#000000
+    style ModalQueue fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,color:#000000
+
+    %% Modal Sandbox - Green theme
+    style ModalSandbox fill:#1b5e20,stroke:#0d3010,stroke-width:3px,color:#ffffff
+    
+    %% Runner - Teal
+    style Runner fill:#00695c,stroke:#004d40,stroke-width:2px,color:#ffffff
+    style RunnerCLI fill:#b2dfdb,stroke:#00695c,stroke-width:2px,color:#000000
+    style PromptHandler fill:#b2dfdb,stroke:#00695c,stroke-width:2px,color:#000000
+    style AgentClientWS fill:#b2dfdb,stroke:#00695c,stroke-width:2px,color:#000000
+    style ProxyFactory fill:#e0f2f1,stroke:#00695c,stroke-width:2px,color:#000000
+    
+    %% OpenCode - Cyan
+    style OpenCode fill:#00838f,stroke:#006064,stroke-width:2px,color:#ffffff
+    style OC_Server fill:#b2ebf2,stroke:#00838f,stroke-width:2px,color:#000000
+    style OC_SDK fill:#b2ebf2,stroke:#00838f,stroke-width:2px,color:#000000
+    style OC_Events fill:#e0f7fa,stroke:#00838f,stroke-width:2px,color:#000000
+    
+    %% VS Code - Blue-Grey
+    style VSCodeStack fill:#37474f,stroke:#263238,stroke-width:2px,color:#ffffff
+    style CodeServer fill:#cfd8dc,stroke:#37474f,stroke-width:2px,color:#000000
+    style VSProxy fill:#eceff1,stroke:#37474f,stroke-width:2px,color:#000000
+    
+
+    %% VNC - Indigo
+    style VNCStack fill:#283593,stroke:#1a237e,stroke-width:2px,color:#ffffff
+    style Xvfb fill:#c5cae9,stroke:#283593,stroke-width:2px,color:#000000
+    style Fluxbox fill:#c5cae9,stroke:#283593,stroke-width:2px,color:#000000
+    style X11VNC fill:#e8eaf6,stroke:#283593,stroke-width:2px,color:#000000
+    style Websockify fill:#e8eaf6,stroke:#283593,stroke-width:2px,color:#000000
+    style VNCProxy fill:#e8eaf6,stroke:#283593,stroke-width:2px,color:#000000
+    style Chrome fill:#3f51b5,stroke:#1a237e,stroke-width:2px,color:#ffffff
+    style DevServer fill:#c5cae9,stroke:#283593,stroke-width:2px,color:#000000
+    
+    %% Terminal - Dark Grey
+    style TTYDStack fill:#424242,stroke:#212121,stroke-width:2px,color:#ffffff
+    style TTYD fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000000
+    style TTYDProxy fill:#eeeeee,stroke:#424242,stroke-width:2px,color:#000000
+    
+    %% Storage - Light green
+    style RepoCode fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px,color:#000000
+    style RunnerVol fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px,color:#000000
+
+    %% External Services - Red theme (at bottom)
+    style ExternalServices fill:#b71c1c,stroke:#7f0000,stroke-width:3px,color:#ffffff
+    style GitHub fill:#ffcdd2,stroke:#b71c1c,stroke-width:2px,color:#000000
+    style Slack fill:#f8bbd9,stroke:#ad1457,stroke-width:2px,color:#000000
+    style Linear fill:#e1bee7,stroke:#6a1b9a,stroke-width:2px,color:#000000
+    style Anthropic fill:#ffe0b2,stroke:#e65100,stroke-width:2px,color:#000000
+    style OpenAI fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px,color:#000000
+    style Google fill:#bbdefb,stroke:#1565c0,stroke-width:2px,color:#000000
