@@ -2,7 +2,7 @@
 
 Build an understandable background coding system in small, demonstrable steps. Start with durable sessions and a scripted worker; add a coding agent, isolated execution, and pull requests only after that foundation works.
 
-**Status:** F0 toolchain is pinned (September 18, 2026). Session behavior, HTTP routes, and SQLite storage are not implemented yet. Cloudflare, Modal, and OpenCode remain reference choices, not requirements for the first build.
+**Status:** F0 toolchain is pinned and the local HTTP server defaults to 127.0.0.1:3000 (September 18, 2026). Session behavior and SQLite storage are not implemented yet. Cloudflare, Modal, and OpenCode remain reference choices, not requirements for the first build.
 
 ## Runtime
 
@@ -18,7 +18,7 @@ npm run format:check
 npm test
 ```
 
-`npm run dev` watches `src/server.ts` and restarts on save. `npm start` runs the compiled entry after `npm run build`. These scripts start a process keep-alive until later tasks add the HTTP server.
+`npm run dev` watches `src/` and runs the TypeScript server. `npm start` runs the compiled server after `npm run build`. Both bind `127.0.0.1:3000` by default (`HOST`, `PORT`, `DATABASE_PATH`). `GET /health` reports readiness and `mode: simulated`. Session routes and SQLite recovery are later tasks; application routes return 503 until the server is ready.
 
 `db:migrate`, `test:e2e`, and `demo:seed` are owned by later tasks and are not present as placeholders.
 

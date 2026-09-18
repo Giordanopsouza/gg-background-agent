@@ -1,51 +1,112 @@
+import http from "node:http";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-// Something tests can hold onto so they can shut the process down.
-export type ProcessHandle = {
-  stop: () => void;
+import { loadConfig, type AppConfig } from "./config.ts";
+import { createHttpApp } from "./http/routes.ts";
+
+export type StartServerOptions = {
+  env?: NodeJS.ProcessEnv;
+  // Later tasks use this to open SQLite. Today tests use it to prove
+  // recovery does not run if the port is already taken.
+  recover?: () => Promise<void> | void;
 };
 
-// Turns the process on. A timer keeps Node from quitting right away —
-// with nothing left to do, it would just exit. This is not a web server yet.
-export function startProcess(): ProcessHandle {
-  // Tick every minute. We don't need the tick to do anything; we just need
-  // the timer to exist. void means "yes, we know we're ignoring this value."
-  const keepAlive = setInterval(() => {
-    void process.pid;
-  }, 60_000);
+export type ServerHandle = {
+  config: AppConfig;
+  markReady: () => void;
+  stop: () => Promise<void>;
+};
+
+export async function startServer(
+  options: StartServerOptions = {},
+): Promise<ServerHandle> {
+  const config = loadConfig(options.env);
+  let ready = false;
+  const app = createHttpApp({
+    config,
+    isReady: () => ready,
+  });
+  const server = http.createServer(app);
+
+  await listen(server, config);
+
+  try {
+    await options.recover?.();
+  } catch (error) {
+    await closeServer(server);
+    throw error;
+  }
 
   return {
-    stop(): void {
-      clearInterval(keepAlive);
+    config,
+    markReady: () => {
+      ready = true;
     },
+    stop: () => closeServer(server),
   };
 }
 
-// Are we running this file directly, or did a test import it?
-// Only the first case should actually start the process.
+function listen(server: http.Server, config: AppConfig): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(
+      { host: config.host, port: config.port, exclusive: true },
+      () => {
+        server.off("error", reject);
+        resolve();
+      },
+    );
+  });
+}
+
+function closeServer(server: http.Server): Promise<void> {
+  server.closeAllConnections();
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+// True only when this file is the program (`npm run dev` / `npm start`).
+// Tests import startServer without binding port 3000.
 function isMainModule(): boolean {
   const entryPath = process.argv[1];
   if (entryPath === undefined) {
     return false;
   }
 
-  // Node tells us this file as a file:// URL and the launch path as a normal
-  // path. Convert the path to the same shape, then see if they match.
   return import.meta.url === pathToFileURL(path.resolve(entryPath)).href;
 }
 
-// If someone ran this file on purpose, start up. If a test imported it, don't.
+async function main(): Promise<void> {
+  try {
+    const handle = await startServer();
+    handle.markReady();
+    const { host, port, workerMode } = handle.config;
+    process.stdout.write(
+      `gg-background-agent: listening on http://${host}:${port} (mode=${workerMode})\n`,
+    );
+
+    const onStop = (): void => {
+      void handle.stop();
+    };
+
+    process.once("SIGINT", onStop);
+    process.once("SIGTERM", onStop);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to start the server";
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
+  }
+}
+
 if (isMainModule()) {
-  const handle = startProcess();
-  process.stdout.write("gg-background-agent: process started\n");
-
-  const onStop = (): void => {
-    handle.stop();
-  };
-
-  // Ctrl+C, or a process manager asking us to quit. Listen once, then stop
-  // the timer so Node can exit.
-  process.once("SIGINT", onStop);
-  process.once("SIGTERM", onStop);
+  void main();
 }
