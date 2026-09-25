@@ -24,20 +24,22 @@ import {
 import { migrateConfiguredDatabase } from "../../src/storage/migrate.ts";
 import { MIGRATIONS } from "../../src/storage/migrations/index.ts";
 
+const latestSchemaVersion = MIGRATIONS.at(-1)?.version ?? 0;
+
 test("openDatabase creates the parent directory and can be rerun without losing data", async () => {
   await withTempDir(async (dir) => {
     const databasePath = path.join(dir, "nested", "sessions.sqlite");
     const db = openDatabase(databasePath);
     try {
       insertSession(db, "session-1");
-      assert.equal(schemaVersion(db), 1);
+      assert.equal(schemaVersion(db), latestSchemaVersion);
     } finally {
       db.close();
     }
 
     const reopened = openDatabase(databasePath);
     try {
-      assert.equal(schemaVersion(reopened), 1);
+      assert.equal(schemaVersion(reopened), latestSchemaVersion);
       assert.deepEqual(sessionIds(reopened), ["session-1"]);
       assert.equal(pragma(reopened, "foreign_keys"), 1);
       assert.equal(pragma(reopened, "journal_mode"), "wal");
@@ -209,6 +211,107 @@ test("foreign keys reject orphan prompts, runs, events, and retries", async () =
   });
 });
 
+test("runs, retries, and events cannot cross session boundaries", async () => {
+  await withTempDir(async (dir) => {
+    const db = openDatabase(path.join(dir, "sessions.sqlite"));
+    try {
+      insertSession(db, "session-1");
+      insertSession(db, "session-2");
+      insertPrompt(db, "prompt-1", "session-1");
+      insertPrompt(db, "prompt-2", "session-2");
+
+      assert.throws(
+        () =>
+          insertRun(db, {
+            id: "wrong-session-run",
+            promptId: "prompt-1",
+            sessionId: "session-2",
+            queueOrder: 1,
+            status: "queued",
+          }),
+        /FOREIGN KEY/,
+      );
+
+      insertRun(db, {
+        id: "run-1",
+        promptId: "prompt-1",
+        sessionId: "session-1",
+        queueOrder: 1,
+        status: "failed",
+      });
+
+      assert.throws(
+        () =>
+          insertRun(db, {
+            id: "wrong-retry",
+            promptId: "prompt-2",
+            sessionId: "session-2",
+            queueOrder: 2,
+            attempt: 2,
+            retryOf: "run-1",
+            status: "queued",
+          }),
+        /FOREIGN KEY/,
+      );
+
+      assert.throws(
+        () =>
+          insertEvent(db, {
+            sessionId: "session-2",
+            seq: 1,
+            runId: "run-1",
+          }),
+        /FOREIGN KEY/,
+      );
+    } finally {
+      db.close();
+    }
+  });
+});
+
+test("the relational integrity migration preserves valid version 1 data", async () => {
+  await withTempDir(async (dir) => {
+    const databasePath = path.join(dir, "sessions.sqlite");
+    const initialMigration = MIGRATIONS[0];
+    assert.ok(initialMigration);
+
+    const oldDatabase = new Database(databasePath);
+    oldDatabase.pragma("foreign_keys = ON");
+    try {
+      applyMigrations(oldDatabase, [initialMigration]);
+      insertSession(oldDatabase, "session-1");
+      insertPrompt(oldDatabase, "prompt-1", "session-1");
+      insertRun(oldDatabase, {
+        id: "run-1",
+        promptId: "prompt-1",
+        sessionId: "session-1",
+        queueOrder: 1,
+        status: "queued",
+      });
+      insertEvent(oldDatabase, {
+        sessionId: "session-1",
+        seq: 1,
+        runId: "run-1",
+      });
+    } finally {
+      oldDatabase.close();
+    }
+
+    const upgraded = openDatabase(databasePath);
+    try {
+      assert.equal(schemaVersion(upgraded), latestSchemaVersion);
+      assert.deepEqual(upgraded.prepare("SELECT id FROM runs").all(), [
+        { id: "run-1" },
+      ]);
+      assert.deepEqual(upgraded.prepare("SELECT run_id FROM events").all(), [
+        { run_id: "run-1" },
+      ]);
+    } finally {
+      upgraded.close();
+    }
+  });
+});
+
 test("a failed migration rolls back and leaves existing data in place", async () => {
   await withTempDir(async (dir) => {
     const databasePath = path.join(dir, "sessions.sqlite");
@@ -222,7 +325,7 @@ test("a failed migration rolls back and leaves existing data in place", async ()
           applyMigrations(db, [
             ...MIGRATIONS,
             {
-              version: 2,
+              version: latestSchemaVersion + 1,
               name: "broken",
               sql: `
                 CREATE TABLE should_not_exist (id TEXT PRIMARY KEY);
@@ -232,13 +335,18 @@ test("a failed migration rolls back and leaves existing data in place", async ()
           ]),
         (error: unknown) => {
           assert.ok(error instanceof StorageError);
-          assert.match(error.message, /migration 2 \(broken\)/);
+          assert.match(
+            error.message,
+            new RegExp(
+              `migration ${String(latestSchemaVersion + 1)} \\(broken\\)`,
+            ),
+          );
           assert.match(error.message, /Existing data was left unchanged/);
           return true;
         },
       );
 
-      assert.equal(schemaVersion(db), 1);
+      assert.equal(schemaVersion(db), latestSchemaVersion);
       assert.deepEqual(sessionIds(db), ["session-1"]);
       assert.deepEqual(commandScopes(db), ["session:session-1:create"]);
       assert.equal(tableExists(db, "should_not_exist"), false);
@@ -248,7 +356,7 @@ test("a failed migration rolls back and leaves existing data in place", async ()
 
     const reopened = openDatabase(databasePath);
     try {
-      assert.equal(schemaVersion(reopened), 1);
+      assert.equal(schemaVersion(reopened), latestSchemaVersion);
       assert.deepEqual(sessionIds(reopened), ["session-1"]);
     } finally {
       reopened.close();
@@ -316,7 +424,7 @@ test("migrateConfiguredDatabase applies migrations to DATABASE_PATH", async () =
     const databasePath = path.join(dir, "data", "sessions.sqlite");
     const result = migrateConfiguredDatabase({ DATABASE_PATH: databasePath });
     assert.equal(result.databasePath, databasePath);
-    assert.equal(result.version, 1);
+    assert.equal(result.version, latestSchemaVersion);
 
     const db = openDatabase(databasePath);
     try {
@@ -326,7 +434,7 @@ test("migrateConfiguredDatabase applies migrations to DATABASE_PATH", async () =
     }
 
     const again = migrateConfiguredDatabase({ DATABASE_PATH: databasePath });
-    assert.equal(again.version, 1);
+    assert.equal(again.version, latestSchemaVersion);
     const reopened = openDatabase(databasePath);
     try {
       assert.deepEqual(sessionIds(reopened), ["session-1"]);
@@ -343,12 +451,14 @@ test("npm run db:migrate creates the configured file", async () => {
     assert.equal(status, 0);
     assert.match(
       stdout,
-      new RegExp(`Migrated ${databasePath} to schema version 1`),
+      new RegExp(
+        `Migrated ${databasePath} to schema version ${String(latestSchemaVersion)}`,
+      ),
     );
 
     const db = openDatabase(databasePath);
     try {
-      assert.equal(schemaVersion(db), 1);
+      assert.equal(schemaVersion(db), latestSchemaVersion);
     } finally {
       db.close();
     }
